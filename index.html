@@ -103,6 +103,19 @@ select{background:var(--surface);border:1px solid var(--line);border-radius:6px;
 .tag.good{color:var(--good)} .tag.mid{color:var(--mid)} .tag.bad{color:var(--bad)}
 .play{padding:4px 10px;min-height:30px;font-size:13px}
 .empty{color:var(--muted);font-size:14px;padding:10px 2px}
+.rev{display:flex;flex-direction:column;gap:12px}
+.revsum{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.revside{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.revside b{display:block;font:600 1.6rem var(--f-display)}
+.revside span{display:block;font-size:12px;color:var(--muted)}
+.revside .cnt{font:12px var(--f-mono);margin-top:6px}
+.revchart{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:8px}
+.revcap{font-size:12px;color:var(--muted)}
+.kp{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;min-width:0}
+.kp:hover,.kp:focus-visible{border-color:var(--accent)}
+.kp small{display:block;color:var(--muted);font-size:12px}
+.kp .san.bl{color:var(--bad)} .kp .san.mi{color:var(--mid)}
+.revbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .foot{color:var(--muted);font-size:13px;max-width:70ch}
 </style>
 
@@ -164,6 +177,15 @@ select{background:var(--surface);border:1px solid var(--line);border-radius:6px;
       <div class="sec">
         <h2>Практичные ходы <span id="midNote"></span></h2>
         <ul class="list" id="midList"><li class="empty">Пока нет анализа.</li></ul>
+      </div>
+      <div class="sec">
+        <h2>Разбор партии <span id="revNote"></span></h2>
+        <div class="revbar">
+          <button id="revBtn">Разобрать партию</button>
+          <select id="revDepth" aria-label="Глубина разбора"><option value="8">быстро (8)</option><option value="10" selected>обычно (10)</option><option value="12">точнее (12)</option></select>
+        </div>
+        <div class="prog" style="margin-top:8px"><i id="revProg"></i></div>
+        <div id="revOut" aria-live="polite"><p class="hint">Разбор запускается сам после мата или ничьей. Можно запустить и раньше, для любой позиции с ходами.</p></div>
       </div>
     </div>
   </div>
@@ -432,8 +454,8 @@ function drawArrows(){
   if(!svg) return;
   if(!arrowMoves||!$("showArrows").checked){ svg.innerHTML=""; lg.innerHTML=""; return; }
   var s="", l="";
-  if(arrowMoves.mid){ s+=arrowSvg(arrowMoves.mid,"var(--arrow-mid)",0.12,0.22); l+='<span class="k2"><i></i>Практичный ('+$("elo").value+'): <b>'+arrowMoves.mid.san+'</b></span>'; }
-  if(arrowMoves.best){ s+=arrowSvg(arrowMoves.best,"var(--arrow-best)",0.16,0.26); l=('<span class="k1"><i></i>Лучший: <b>'+arrowMoves.best.san+'</b></span>')+l; }
+  if(arrowMoves.mid){ s+=arrowSvg(arrowMoves.mid,arrowMoves.midColor||"var(--arrow-mid)",0.12,0.22); l+='<span class="k2"><i'+(arrowMoves.midColor?' style="background:'+arrowMoves.midColor+'"':'')+'></i>'+(arrowMoves.labelMid||('Практичный ('+$("elo").value+')'))+': <b>'+arrowMoves.mid.san+'</b></span>'; }
+  if(arrowMoves.best){ s+=arrowSvg(arrowMoves.best,"var(--arrow-best)",0.16,0.26); l=('<span class="k1"><i></i>'+(arrowMoves.labelBest||"Лучший")+': <b>'+arrowMoves.best.san+'</b></span>')+l; }
   svg.innerHTML=s; lg.innerHTML=l;
 }
 function setStatus(){
@@ -461,7 +483,9 @@ function playMove(mv){
   var res=game.move(mv);
   selected=null; targets=[]; hlMove=null;
   if(!res) return;
+  cancelReview();
   clearResults(); refresh();
+  if(game.game_over()){ if(game.history().length>=4) startReview(true); return; }
   if($("auto").checked) runAnalysis();
 }
 function clearResults(){
@@ -474,9 +498,9 @@ function clearResults(){
   $("bestNote").textContent=""; $("midNote").textContent="";
   $("prog").style.width="0"; $("depthInfo").textContent="Нажмите «Анализировать».";
 }
-$("undo").onclick=function(){ game.undo(); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
+$("undo").onclick=function(){ cancelReview(); game.undo(); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
 $("flip").onclick=function(){ flipped=!flipped; drawBoard(); };
-$("reset").onclick=function(){ game=new Chess(START); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
+$("reset").onclick=function(){ resetReview(); startFen=START; game=new Chess(START); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
 $("loadfen").onclick=loadFen;
 $("fen").addEventListener("keydown",function(e){ if(e.key==="Enter") loadFen(); });
 function loadFen(){
@@ -486,6 +510,7 @@ function loadFen(){
     next=new Chess();
     if(!v||!next.load_pgn(v,{sloppy:true})){ $("status").textContent="Не удалось прочитать ни FEN, ни список ходов."; return; }
   }
+  resetReview(); startFen=chk.valid?v:START;
   game=next; selected=null;targets=[];hlMove=null; clearResults(); refresh();
   if($("auto").checked) runAnalysis();
 }
@@ -551,7 +576,7 @@ function renderResults(){
   }
 }
 /* ---------- Stockfish (UCI in a Web Worker) ---------- */
-var SF={worker:null,ready:false,busy:false,queued:null,cur:null,bucket:{},expected:0,legal:[],goN:0,bmN:0,nodes:0};
+var SF={worker:null,ready:false,busy:false,queued:null,cur:null,bucket:{},expected:0,legal:[],goN:0,bmN:0,nodes:0,mpv:7};
 var ENGINES=[
   {name:"Stockfish 16 NNUE (быстрый)",js:"https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.js",wasm:"https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.wasm",timeout:90000},
   {name:"Stockfish 10 (медленный)",js:"https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js",wasm:null,timeout:20000}
@@ -590,8 +615,8 @@ function sfInit(eng){
     SF.worker.postMessage("uci");
   });
 }
-function sfAnalyze(fen,depth,token,onRes,onDone){
-  var job={fen:fen,depth:depth,token:token,onRes:onRes,onDone:onDone};
+function sfAnalyze(fen,depth,token,onRes,onDone,opts){
+  var job={fen:fen,depth:depth,token:token,onRes:onRes,onDone:onDone,opts:opts||{}};
   if(SF.busy){ SF.queued=job; SF.worker.postMessage("stop"); return; }
   sfStart(job);
 }
@@ -599,10 +624,12 @@ function sfStart(job){
   var g=new Chess(job.fen);
   SF.cur=job; SF.busy=true; SF.bucket={}; SF.nodes=0;
   SF.legal=g.moves({verbose:true});
-  SF.expected=Math.min(7,SF.legal.length);
+  var mpv=job.opts.multipv||7;
+  if(SF.mpv!==mpv){ SF.worker.postMessage("setoption name MultiPV value "+mpv); SF.mpv=mpv; }
+  SF.expected=Math.min(mpv,SF.legal.length);
   SF.goN++;
   SF.worker.postMessage("position fen "+job.fen);
-  SF.worker.postMessage("go depth "+job.depth+" movetime 15000");
+  SF.worker.postMessage("go depth "+job.depth+" movetime "+(job.opts.movetime||15000));
 }
 function sfHandle(line){
   if(line.indexOf("bestmove")===0){
@@ -688,6 +715,139 @@ async function runAnalysis(){
     finish();
   }
 }
+/* ---------- Разбор партии ---------- */
+var startFen=START, review={running:false,id:0,data:null};
+function winPct(cp){ cp=Math.max(-1500,Math.min(1500,cp)); return 50+50*(2/(1+Math.exp(-0.00368208*cp))-1); }
+function sfEval(fen,depth){
+  return new Promise(function(resolve){
+    var last=null;
+    sfAnalyze(fen,depth,0,function(r){last=r},function(){resolve(last)},{multipv:1,movetime:6000});
+  });
+}
+function cancelReview(){
+  if(!review.running) return;
+  review.id++; review.running=false;
+  $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="0"; $("revNote").textContent="";
+}
+function resetReview(){
+  cancelReview(); review.data=null;
+  $("revOut").innerHTML='<p class="hint">Разбор запускается сам после мата или ничьей. Можно запустить и раньше, для любой позиции с ходами.</p>';
+  $("revNote").textContent="";
+}
+/* s[i]: оценка позиции i с точки зрения того, чей ход (в сотых пешки); bestMv[i]: лучший ход движка там. */
+function buildReview(hist,turns,s,bestMv){
+  var res=[], acc={w:[],b:[]}, cnt={w:{bl:0,mi:0,ina:0},b:{bl:0,mi:0,ina:0}}, w=[], i;
+  for(i=0;i<s.length;i++) w.push(turns[i]==="w"?s[i]:-s[i]);
+  for(i=0;i<hist.length;i++){
+    var mover=turns[i], m=hist[i], b=bestMv[i];
+    var same=!!b&&b.from===m.from&&b.to===m.to&&(b.promotion||"")===(m.promotion||"");
+    var wl=same?0:Math.max(0,winPct(s[i])-winPct(-s[i+1]));
+    var cls=wl>=30?"bl":wl>=20?"mi":wl>=10?"ina":"ok";
+    var a=Math.max(0,Math.min(100,103.1668*Math.exp(-0.04354*wl)-3.1669));
+    acc[mover].push(a); if(cls!=="ok") cnt[mover][cls]++;
+    res.push({i:i,mover:mover,wl:wl,cls:cls,
+      best:b?{from:b.from,to:b.to,san:b.san,promotion:b.promotion}:null,
+      played:{from:m.from,to:m.to,san:m.san,promotion:m.promotion},
+      whiteBest:turns[i]==="w"?s[i]:-s[i], whitePlayed:turns[i]==="w"?-s[i+1]:s[i+1]});
+  }
+  return {res:res,acc:acc,cnt:cnt,w:w};
+}
+async function startReview(auto){
+  if(review.running){ cancelReview(); return; }
+  var hist=game.history({verbose:true});
+  if(hist.length<2){ $("revOut").innerHTML='<p class="hint">Сыграйте хотя бы пару ходов.</p>'; return; }
+  if(!(SF.ready&&SF.worker)){ $("revOut").innerHTML='<p class="hint">Для разбора нужен загруженный Stockfish.</p>'; return; }
+  clearResults();
+  var my=++review.id; review.running=true; review.data=null;
+  $("revBtn").textContent="Остановить"; $("revOut").innerHTML="";
+  var depth=+$("revDepth").value, N=hist.length, i;
+  var clone=new Chess(startFen), fens=[clone.fen()], turns=[clone.turn()];
+  for(i=0;i<N;i++){ clone.move({from:hist[i].from,to:hist[i].to,promotion:hist[i].promotion}); fens.push(clone.fen()); turns.push(clone.turn()); }
+  var s=[], bestMv=[];
+  for(i=0;i<=N;i++){
+    if(my!==review.id) return;
+    $("revNote").textContent="· позиция "+(i+1)+" из "+(N+1);
+    $("revProg").style.width=Math.round(i/(N+1)*100)+"%";
+    var g=new Chess(fens[i]), legal=g.moves({verbose:true});
+    if(legal.length===0){ s.push(g.in_checkmate()?-MATE:0); bestMv.push(null); continue; }
+    if(legal.length===1&&i<N){ s.push(null); bestMv.push(legal[0]); continue; }
+    var r=await sfEval(fens[i],depth);
+    if(!r||!r.items||!r.items.length) r=await sfEval(fens[i],depth);
+    if(my!==review.id) return;
+    if(!r||!r.items||!r.items.length){
+      review.running=false; $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="0"; $("revNote").textContent="";
+      $("revOut").innerHTML='<p class="hint">Движок не ответил на позиции '+(i+1)+'. Попробуйте ещё раз.</p>'; return;
+    }
+    s.push(r.items[0].score); bestMv.push(r.items[0].m);
+  }
+  for(i=N-1;i>=0;i--){ if(s[i]===null) s[i]=-s[i+1]; }
+  var data=buildReview(hist,turns,s,bestMv);
+  data.startFen=startFen;
+  data.hist=hist.map(function(m){return {from:m.from,to:m.to,promotion:m.promotion}});
+  var last=new Chess(fens[N]);
+  data.result=last.in_checkmate()?"Мат. Победили "+(last.turn()==="w"?"чёрные":"белые")+".":last.game_over()?"Ничья.":"Партия не закончена.";
+  review.data=data; review.running=false;
+  $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="100%"; $("revNote").textContent="· готово";
+  renderReview(data);
+}
+function renderReview(d){
+  var out=$("revOut"); out.innerHTML="";
+  var wrap=document.createElement("div"); wrap.className="rev"; out.appendChild(wrap);
+  var head=document.createElement("div"); head.className="revcap"; head.textContent=d.result+" Ходов: "+d.res.length+" полуходов."; wrap.appendChild(head);
+  var sum=document.createElement("div"); sum.className="revsum"; wrap.appendChild(sum);
+  [["Белые","w"],["Чёрные","b"]].forEach(function(p){
+    var a=d.acc[p[1]], c=d.cnt[p[1]], avg=a.length?a.reduce(function(x,y){return x+y},0)/a.length:null;
+    var el=document.createElement("div"); el.className="revside";
+    el.innerHTML="<span></span><b></b><div class=\"cnt\"></div>";
+    el.children[0].textContent=p[0]+" · точность";
+    el.children[1].textContent=avg===null?"—":Math.round(avg)+"%";
+    el.children[2].textContent="?? "+c.bl+" · ? "+c.mi+" · ?! "+c.ina;
+    sum.appendChild(el);
+  });
+  var W=300,H=90,n=d.w.length,pts=[],k;
+  for(k=0;k<n;k++){ var x=n>1?k/(n-1)*W:0, y=H-winPct(d.w[k])/100*H; pts.push(x.toFixed(1)+","+y.toFixed(1)); }
+  var svg='<svg class="revchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="График оценки партии">'+
+    '<rect x="0" y="0" width="'+W+'" height="'+(H/2)+'" style="fill:var(--bar-black);opacity:.28"/>'+
+    '<rect x="0" y="'+(H/2)+'" width="'+W+'" height="'+(H/2)+'" style="fill:var(--bar-white);opacity:.28"/>'+
+    '<line x1="0" y1="'+(H/2)+'" x2="'+W+'" y2="'+(H/2)+'" style="stroke:var(--line);stroke-width:1"/>'+
+    '<polyline points="'+pts.join(" ")+'" style="fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linejoin:round"/>';
+  d.res.forEach(function(r){
+    if(r.cls==="bl"||r.cls==="mi"){
+      var px=n>1?(r.i+1)/(n-1)*W:0, py=H-winPct(d.w[r.i+1])/100*H;
+      svg+='<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="3.2" style="fill:'+(r.cls==="bl"?"var(--bad)":"var(--mid)")+';stroke:var(--surface);stroke-width:1"/>';
+    }
+  });
+  svg+="</svg>";
+  var chart=document.createElement("div"); chart.innerHTML=svg; wrap.appendChild(chart);
+  var cap=document.createElement("div"); cap.className="revcap"; cap.textContent="Выше середины лучше у белых, ниже у чёрных. Точки: грубые ошибки и ошибки."; wrap.appendChild(cap);
+  var key=d.res.filter(function(r){return r.cls==="bl"||r.cls==="mi"}).sort(function(a,b){return b.wl-a.wl}).slice(0,8).sort(function(a,b){return a.i-b.i});
+  var h=document.createElement("h2"); h.textContent="Ключевые ошибки"; h.style.margin="4px 0 0"; wrap.appendChild(h);
+  if(!key.length){ var e=document.createElement("p"); e.className="hint"; e.textContent="Грубых ошибок и ошибок нет."; wrap.appendChild(e); }
+  var list=document.createElement("ul"); list.className="list"; wrap.appendChild(list);
+  key.forEach(function(r){
+    var li=document.createElement("li"); li.className="kp"; li.tabIndex=0;
+    var no=Math.floor(r.i/2)+1, pre=r.mover==="w"?no+". ":no+"… ";
+    li.innerHTML="<span><span class=\"san\"></span><small></small></span><button class=\"play\">Показать</button>";
+    var sn=li.querySelector(".san"); sn.className="san "+r.cls; sn.textContent=pre+r.played.san+(r.cls==="bl"?"??":"?");
+    li.querySelector("small").textContent=(r.mover==="w"?"белые":"чёрные")+": оценка "+fmtScore(r.whiteBest)+" → "+fmtScore(r.whitePlayed)+(r.best?" · лучше было "+r.best.san:"");
+    function go(){ goToReview(r.i); }
+    li.addEventListener("click",go);
+    li.addEventListener("keydown",function(e){ if(e.key==="Enter") go(); });
+    list.appendChild(li);
+  });
+}
+function goToReview(k){
+  var d=review.data; if(!d) return;
+  var g=new Chess(d.startFen), j;
+  for(j=0;j<k;j++) g.move({from:d.hist[j].from,to:d.hist[j].to,promotion:d.hist[j].promotion});
+  game=g; selected=null; targets=[]; hlMove=null;
+  clearResults();
+  var r=d.res[k];
+  arrowMoves={best:r.best,mid:r.played,labelBest:"Лучше было",labelMid:"Сыграно",midColor:"var(--bad)"};
+  refresh();
+  try{ $("board").scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
+}
+$("revBtn").onclick=function(){ startReview(false); };
 updateEloUi(); refresh();
 })();
 </script>
