@@ -190,7 +190,7 @@ select{background:var(--surface);border:1px solid var(--line);border-radius:6px;
     </div>
   </div>
 
-  <p class="foot">Анализ считает Stockfish прямо в браузере, на вашем устройстве. Это версия asm.js: она медленнее настольной, но для практической игры достаточно. Если Stockfish не загрузится, страница сама переключится на слабый встроенный движок и покажет это в панели справа. Подсказки появляются сразу и уточняются до выбранной глубины (глубина 10 означает 10 полуходов, то есть по 5 ходов каждой стороны), но не дольше 15 секунд. Время на ход для человека оценивается по эвристике: число ходов, взятий и шахов, количество фигур на доске и разрыв между лучшим и вторым ходом. Потеря в сотых долях пешки считается от лучшего хода, который нашёл движок.</p>
+  <p class="foot">Анализ считает Stockfish прямо в браузере, на вашем устройстве. Это версия asm.js: она медленнее настольной, но для практической игры достаточно. Если Stockfish не загрузится, страница сама переключится на слабый встроенный движок и покажет это в панели справа. Подсказки появляются сразу и уточняются до выбранной глубины (глубина 10 означает 10 полуходов, то есть по 5 ходов каждой стороны), но не дольше 15 секунд. Время на ход для человека оценивается по эвристике: число ходов, взятий и шахов, количество фигур на доске и разрыв между лучшим и вторым ходом. Если лучший ход очевиден (взятие, равный размен, начальный или единственный ход), практичным становится он же. Потеря в сотых долях пешки считается от лучшего хода, который нашёл движок.</p>
 </div>
 
 <script>
@@ -327,7 +327,14 @@ function fmtScore(white){
   if(Math.abs(white)>MATE-100) return sign+"M"+Math.ceil((MATE-Math.abs(white))/2);
   return sign+Math.abs(white/100).toFixed(2);
 }
-function classify(res, elo, turn){
+/* Когда лучший ход очевиден, практичным считается он же. */
+function obviousReason(fen,m,items){
+  var t=estimateThink(fen,items);
+  if(t&&t.sec<=2) return t.label==="единственный ход"?"единственный ход":"очевидный ход";
+  if(m.captured&&VAL[m.captured]>=VAL[m.piece]-10) return "простое взятие или размен";
+  return null;
+}
+function classify(res, elo, turn, fen){
   var all=res.items.map(function(i){return i});
   var exact=all.filter(function(i){return i.exact}).sort(function(a,b){return b.score-a.score});
   var best=exact.length?exact[0].score:0;
@@ -345,7 +352,12 @@ function classify(res, elo, turn){
   if(!mid.length&&!forcedMate){
     mid=rest.filter(function(i){return i.loss<=250&&i.score>-MATE+100}).sort(function(a,b){return Math.abs(a.loss-prof.center)-Math.abs(b.loss-prof.center)}).slice(0,3);
   }
-  return {top:top,mid:mid,prof:prof,forcedMate:forcedMate,best:best};
+  var obvious=null;
+  if(!forcedMate&&top.length&&fen){
+    obvious=obviousReason(fen,top[0].m,res.items);
+    if(obvious) mid=[top[0]];
+  }
+  return {top:top,mid:mid,prof:prof,forcedMate:forcedMate,best:best,obvious:obvious};
 }
 function plMoves(n){ var m=n%10, h=n%100; return (m===1&&h!==11)?"ход":(m>=2&&m<=4&&(h<12||h>14))?"хода":"ходов"; }
 function describeAdvantage(white){
@@ -453,6 +465,12 @@ function drawArrows(){
   var svg=$("arrows"), lg=$("legend");
   if(!svg) return;
   if(!arrowMoves||!$("showArrows").checked){ svg.innerHTML=""; lg.innerHTML=""; return; }
+  var am=arrowMoves;
+  if(am.mid&&am.best&&!am.midColor&&am.mid.from===am.best.from&&am.mid.to===am.best.to){
+    svg.innerHTML=arrowSvg(am.best,"var(--arrow-best)",0.16,0.26);
+    lg.innerHTML='<span class="k1"><i></i>Лучший и практичный: <b>'+am.best.san+'</b></span>';
+    return;
+  }
   var s="", l="";
   if(arrowMoves.mid){ s+=arrowSvg(arrowMoves.mid,arrowMoves.midColor||"var(--arrow-mid)",0.12,0.22); l+='<span class="k2"><i'+(arrowMoves.midColor?' style="background:'+arrowMoves.midColor+'"':'')+'></i>'+(arrowMoves.labelMid||('Практичный ('+$("elo").value+')'))+': <b>'+arrowMoves.mid.san+'</b></span>'; }
   if(arrowMoves.best){ s+=arrowSvg(arrowMoves.best,"var(--arrow-best)",0.16,0.26); l=('<span class="k1"><i></i>'+(arrowMoves.labelBest||"Лучший")+': <b>'+arrowMoves.best.san+'</b></span>')+l; }
@@ -556,7 +574,7 @@ function renderResults(){
     $("bestList").innerHTML='<li class="empty">В позиции нет ходов.</li>';
     $("midList").innerHTML=""; arrowMoves=null; drawArrows(); return;
   }
-  var c=classify(res,+$("elo").value,turn);
+  var c=classify(res,+$("elo").value,turn,lastResult.fen);
   if(res.noEval) updateAdvantage(null,"Единственный ход, оценку считать не нужно.");
   else if(res.items.length) updateAdvantage(turn==="w"?c.best:-c.best,null,res.depth,!lastResult.final);
   updateThink(lastResult.fen&&res.items.length?estimateThink(lastResult.fen,res.items):null);
@@ -571,7 +589,7 @@ function renderResults(){
   } else if(!c.mid.length){
     ml.innerHTML='<li class="empty">Подходящих ходов не нашлось: почти все альтернативы заметно хуже или позиция слишком острая.</li>';
   } else {
-    $("midNote").textContent="· ближе всего к уровню "+$("elo").value;
+    $("midNote").textContent=c.obvious?"· "+c.obvious+": лучший ход и есть практичный":"· ближе всего к уровню "+$("elo").value;
     c.mid.forEach(function(d){ml.appendChild(moveRow(d,true))});
   }
 }
