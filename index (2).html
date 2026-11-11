@@ -1,0 +1,880 @@
+<title>Шахматный советник</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.js"></script>
+<style>
+/* Layout: доска слева, панель ходов справа; на телефоне панель уходит под доску. */
+:root{
+  --bg:#eef0f3; --surface:#ffffff; --fg:#1b2230; --muted:#5d6779; --line:#d5dae2;
+  --accent:#c4561a; --accent-fg:#ffffff;
+  --sq-light:#dfe5ee; --sq-dark:#8fa1bb; --hl:rgba(196,86,26,.55); --sel:rgba(40,110,200,.45);
+  --good:#1f7a4d; --mid:#8a6a00; --bad:#b3372f;
+  --arrow-best:#17a35f; --arrow-mid:#2a6fd6;
+  --bar-white:#fbfbf8; --bar-black:#1c2230;
+  --piece-w:#fdfdfb; --piece-b:#1c2230; --piece-edge:#1c2230; --piece-edge-w:#8b96a8;
+  --f-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12161d; --surface:#1a2029; --fg:#e6eaf1; --muted:#98a2b3; --line:#2b3340;
+  --accent:#ee8a4f; --accent-fg:#1a1208;
+  --sq-light:#9fb0c8; --sq-dark:#51627d; --hl:rgba(238,138,79,.6); --sel:rgba(90,160,240,.5);
+  --good:#4fc08a; --mid:#d9b43c; --bad:#ef7c73;
+  --arrow-best:#3fd488; --arrow-mid:#5da2ff;
+  --bar-white:#eef1f6; --bar-black:#07090d;
+  --piece-w:#fbfbf8; --piece-b:#10141b; --piece-edge:#0a0d12; --piece-edge-w:#3a4558;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161d; --surface:#1a2029; --fg:#e6eaf1; --muted:#98a2b3; --line:#2b3340;
+  --accent:#ee8a4f; --accent-fg:#1a1208;
+  --sq-light:#9fb0c8; --sq-dark:#51627d; --hl:rgba(238,138,79,.6); --sel:rgba(90,160,240,.5);
+  --good:#4fc08a; --mid:#d9b43c; --bad:#ef7c73;
+  --arrow-best:#3fd488; --arrow-mid:#5da2ff;
+  --bar-white:#eef1f6; --bar-black:#07090d;
+  --piece-w:#fbfbf8; --piece-b:#10141b; --piece-edge:#0a0d12; --piece-edge-w:#3a4558;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-block:20px 32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font-family:var(--f-display);font-size:clamp(1.6rem,4vw,2.3rem);line-height:1.1;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.lead{color:var(--muted);margin:6px 0 0;max-width:62ch}
+.grid{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.boardcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+.bwrap{position:relative;border:2px solid var(--fg);width:100%;max-width:100%}
+.board{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;aspect-ratio:1;max-width:100%;
+  user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#arrows{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.adv{display:flex;flex-direction:column;gap:6px}
+.advbar{height:10px;background:var(--bar-black);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.advbar i{display:block;height:100%;width:50%;background:var(--bar-white);transition:width .25s}
+.advtxt{font-weight:600;font-size:15px}
+.think{font-size:14px;color:var(--muted);min-height:20px}
+.advtxt small{font:400 13px var(--f-mono);color:var(--muted);margin-left:6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;min-height:20px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{display:inline-block;width:22px;height:6px;border-radius:3px}
+.legend .k1 i{background:var(--arrow-best)} .legend .k2 i{background:var(--arrow-mid)}
+.legend b{font-family:var(--f-mono)}
+.sq{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:clamp(26px,8.6vw,58px);line-height:1;min-width:0}
+.sq.l{background:var(--sq-light)} .sq.d{background:var(--sq-dark)}
+.sq .p{font-family:"Noto Sans Symbols 2","Segoe UI Symbol","Apple Symbols","DejaVu Sans",sans-serif;pointer-events:none;
+  -webkit-text-stroke:1.2px var(--piece-edge);paint-order:stroke fill}
+.sq .p.w{color:var(--piece-w);-webkit-text-stroke-color:var(--piece-edge-w);text-shadow:0 1px 0 var(--piece-edge)}
+.sq .p.b{color:var(--piece-b)}
+.sq.sel::after,.sq.tgt::after,.sq.hl::after{content:"";position:absolute;inset:0;pointer-events:none}
+.sq.sel::after{background:var(--sel)}
+.sq.hl::after{background:var(--hl)}
+.sq.tgt::after{background:radial-gradient(circle,var(--sel) 0 20%,transparent 22%)}
+.sq .co{position:absolute;font:500 10px var(--f-mono);opacity:.75;pointer-events:none;color:var(--fg)}
+.sq .co.r{top:2px;left:3px} .sq .co.f{bottom:1px;right:3px}
+.bar{display:flex;flex-wrap:wrap;gap:8px}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 12px;cursor:pointer;min-height:36px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+button:focus-visible,select:focus-visible,input:focus-visible,.sq:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fen{display:flex;gap:8px}
+.fen input{flex:1;min-width:0;font:12px var(--f-mono);padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.status{font-family:var(--f-mono);font-size:13px;color:var(--muted);min-height:20px}
+.panel{display:flex;flex-direction:column;gap:16px;min-width:0}
+.ctl{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between}
+.row label{font-size:13px;color:var(--muted)}
+.elo{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.elo b{font:600 1.8rem var(--f-display);color:var(--accent)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+select{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.hint{font-size:13px;color:var(--muted)}
+.prog{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.sec h2{font:600 .78rem var(--f-body);letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.sec h2 span{font-weight:400;letter-spacing:0;text-transform:none}
+.list{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.mv{display:grid;grid-template-columns:minmax(64px,auto) 1fr auto;gap:10px;align-items:center;background:var(--surface);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;min-width:0}
+.mv:hover,.mv.on{border-color:var(--accent)}
+.san{font:600 1.05rem var(--f-mono)}
+.meta{display:flex;flex-direction:column;min-width:0}
+.ev{font:13px var(--f-mono)}
+.tag{font-size:12px}
+.tag.good{color:var(--good)} .tag.mid{color:var(--mid)} .tag.bad{color:var(--bad)}
+.play{padding:4px 10px;min-height:30px;font-size:13px}
+.empty{color:var(--muted);font-size:14px;padding:10px 2px}
+.rev{display:flex;flex-direction:column;gap:12px}
+.revsum{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.revside{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.revside b{display:block;font:600 1.6rem var(--f-display)}
+.revside span{display:block;font-size:12px;color:var(--muted)}
+.revside .cnt{font:12px var(--f-mono);margin-top:6px}
+.revchart{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:8px}
+.revcap{font-size:12px;color:var(--muted)}
+.kp{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;min-width:0}
+.kp:hover,.kp:focus-visible{border-color:var(--accent)}
+.kp small{display:block;color:var(--muted);font-size:12px}
+.kp .san.bl{color:var(--bad)} .kp .san.mi{color:var(--mid)}
+.revbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.foot{color:var(--muted);font-size:13px;max-width:70ch}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Шахматный советник</h1>
+    <p class="lead">Помимо лучших ходов показывает практичные: чуть неточные, но естественные для игрока уровня 1500–1700. Считает Stockfish, подсказки появляются за доли секунды и уточняются.</p>
+  </header>
+
+  <div class="grid">
+    <div class="boardcol">
+      <div class="bwrap">
+        <div class="board" id="board" role="grid" aria-label="Шахматная доска"></div>
+        <svg id="arrows" viewBox="0 0 8 8" aria-hidden="true"></svg>
+      </div>
+      <div class="adv" aria-live="polite">
+        <div class="advbar" aria-hidden="true"><i id="advFill"></i></div>
+        <div class="advtxt" id="advTxt">Оценка позиции появится после анализа.</div>
+        <div class="think" id="think"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="status" id="status"></div>
+      <div class="bar">
+        <button id="undo">Отменить ход</button>
+        <button id="flip">Перевернуть</button>
+        <button id="reset">Начальная позиция</button>
+        <button id="analyze" class="primary">Анализировать</button>
+      </div>
+      <div class="fen">
+        <input id="mvin" aria-label="Быстрый ход" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ход текстом: e4, Nf3, O-O или e2e4">
+        <button id="mvgo">Ход</button>
+      </div>
+      <div class="fen">
+        <input id="fen" aria-label="FEN или список ходов" spellcheck="false" placeholder="FEN или список ходов: 1. e4 e5 2. Nf3 …">
+        <button id="loadfen">Загрузить</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ctl">
+        <div class="elo"><b id="eloVal">1600</b><span class="hint">целевой рейтинг Эло</span></div>
+        <input type="range" id="elo" min="1200" max="2000" step="50" value="1600" aria-label="Целевой рейтинг Эло">
+        <div class="hint" id="eloHint"></div>
+        <div class="row">
+          <div><label for="depth">Глубина анализа (полуходов)</label><br>
+            <select id="depth"><option value="8">8, быстро</option><option value="10" selected>10, по умолчанию</option><option value="12">12, точнее</option></select></div>
+          <div><label><input type="checkbox" id="auto" checked> Анализировать после каждого хода</label><br>
+            <label><input type="checkbox" id="showArrows" checked> Показывать стрелки на доске</label></div>
+        </div>
+        <div class="prog"><i id="prog"></i></div>
+        <div class="hint"><b id="engine">Загружаю Stockfish…</b></div>
+        <div class="hint" id="depthInfo">Подсказки появятся сразу после загрузки движка и обновляются по мере углубления анализа.</div>
+      </div>
+
+      <div class="sec">
+        <h2>Лучшие ходы <span id="bestNote"></span></h2>
+        <ul class="list" id="bestList"><li class="empty">Пока нет анализа.</li></ul>
+      </div>
+      <div class="sec">
+        <h2>Практичные ходы <span id="midNote"></span></h2>
+        <ul class="list" id="midList"><li class="empty">Пока нет анализа.</li></ul>
+      </div>
+      <div class="sec">
+        <h2>Разбор партии <span id="revNote"></span></h2>
+        <div class="revbar">
+          <button id="revBtn">Разобрать партию</button>
+          <select id="revDepth" aria-label="Глубина разбора"><option value="8">быстро (8)</option><option value="10" selected>обычно (10)</option><option value="12">точнее (12)</option></select>
+        </div>
+        <div class="prog" style="margin-top:8px"><i id="revProg"></i></div>
+        <div id="revOut" aria-live="polite"><p class="hint">Разбор запускается сам после мата или ничьей. Можно запустить и раньше, для любой позиции с ходами.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">Анализ считает Stockfish прямо в браузере, на вашем устройстве. Это версия asm.js: она медленнее настольной, но для практической игры достаточно. Если Stockfish не загрузится, страница сама переключится на слабый встроенный движок и покажет это в панели справа. Подсказки появляются сразу и уточняются до выбранной глубины (глубина 10 означает 10 полуходов, то есть по 5 ходов каждой стороны), но не дольше 15 секунд. Время на ход для человека оценивается по эвристике: число ходов, взятий и шахов, количество фигур на доске и разрыв между лучшим и вторым ходом. Если лучший ход очевиден (взятие, равный размен, начальный или единственный ход), практичным становится он же. Потеря в сотых долях пешки считается от лучшего хода, который нашёл движок.</p>
+</div>
+
+<script>
+(function(){
+"use strict";
+var START="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+var game=new Chess(START);
+var flipped=false, selected=null, targets=[], hlMove=null, lastResult=null, runId=0;
+var GLYPH={k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
+var $=function(id){return document.getElementById(id)};
+
+/* ---------- Engine ---------- */
+var VAL={p:100,n:320,b:330,r:500,q:900,k:0};
+var MATE=30000, INF=100000, WINDOW=260;
+var PST={
+p:[0,0,0,0,0,0,0,0,50,50,50,50,50,50,50,50,10,10,20,30,30,20,10,10,5,5,10,25,25,10,5,5,0,0,0,20,20,0,0,0,5,-5,-10,0,0,-10,-5,5,5,10,10,-20,-20,10,10,5,0,0,0,0,0,0,0,0],
+n:[-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-30,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-30,5,10,15,15,10,5,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-30,-40,-50],
+b:[-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,10,10,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,10,10,10,10,10,10,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20],
+r:[0,0,0,0,0,0,0,0,5,10,10,10,10,10,10,5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,0,0,0,5,5,0,0,0],
+q:[-20,-10,-10,-5,-5,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,5,5,5,0,-10,-5,0,5,5,5,5,0,-5,0,0,5,5,5,5,0,-5,-10,5,5,5,5,5,0,-10,-10,0,5,0,0,0,0,-10,-20,-10,-10,-5,-5,-10,-10,-20],
+k:[-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-20,-30,-30,-40,-40,-30,-30,-20,-10,-20,-20,-20,-20,-20,-20,-10,20,20,0,0,0,0,20,20,20,30,10,0,0,10,30,20]
+};
+function evaluate(g){
+  var b=g.board(), s=0, mat=0, kings=[], bw=0, bb=0, r, f, p, idx, sign;
+  for(r=0;r<8;r++)for(f=0;f<8;f++){
+    p=b[r][f]; if(!p) continue;
+    idx=r*8+f; sign=p.color==="w"?1:-1;
+    if(p.type==="k"){kings.push([p,r,f]);continue}
+    if(p.type!=="p") mat+=VAL[p.type];
+    if(p.type==="b"){ if(p.color==="w") bw++; else bb++; }
+    s+=sign*(VAL[p.type]+PST[p.type][p.color==="w"?idx:(idx^56)]);
+  }
+  if(bw>1) s+=30; if(bb>1) s-=30;
+  var endgame=mat<2600;
+  for(var i=0;i<kings.length;i++){
+    var k=kings[i], kp=k[0], kr=k[1], kf=k[2], kidx=kr*8+kf, ks;
+    sign=kp.color==="w"?1:-1;
+    if(endgame) ks=(3-(Math.abs(kf-3.5)+Math.abs(kr-3.5)-1))*10;
+    else ks=PST.k[kp.color==="w"?kidx:(kidx^56)];
+    s+=sign*ks;
+  }
+  return g.turn()==="w"?s:-s;
+}
+function orderMoves(ms){
+  for(var i=0;i<ms.length;i++){
+    var m=ms[i], sc=0;
+    if(m.captured) sc+=10*VAL[m.captured]-VAL[m.piece]+1000;
+    if(m.promotion) sc+=800;
+    m._o=sc;
+  }
+  ms.sort(function(a,b){return b._o-a._o});
+  return ms;
+}
+var nodes=0, deadline=0, TIMEOUT={t:1};
+function tick(){ if((++nodes&511)===0 && performance.now()>deadline) throw TIMEOUT; }
+function qsearch(g,alpha,beta,qd){
+  tick();
+  var stand=evaluate(g);
+  if(stand>=beta) return stand;
+  if(stand>alpha) alpha=stand;
+  if(qd>=4) return stand;
+  var ms=g.moves({verbose:true}).filter(function(m){return m.captured||m.promotion});
+  orderMoves(ms);
+  var best=stand;
+  for(var i=0;i<ms.length;i++){
+    g.move(ms[i]);
+    var sc=-qsearch(g,-beta,-alpha,qd+1);
+    g.undo();
+    if(sc>best){best=sc; if(sc>alpha){alpha=sc; if(alpha>=beta) break;}}
+  }
+  return best;
+}
+function search(g,depth,alpha,beta,ply){
+  tick();
+  var ms=g.moves({verbose:true});
+  if(ms.length===0) return g.in_check()?-MATE+ply:0;
+  if(depth<=0) return qsearch(g,alpha,beta,0);
+  orderMoves(ms);
+  var best=-INF;
+  for(var i=0;i<ms.length;i++){
+    g.move(ms[i]);
+    var sc=-search(g,depth-1,-beta,-alpha,ply+1);
+    g.undo();
+    if(sc>best){best=sc; if(sc>alpha){alpha=sc; if(alpha>=beta) break;}}
+  }
+  return best;
+}
+function yieldUI(){ return new Promise(function(r){setTimeout(r,0)}); }
+
+async function analyzePosition(fen, ms, myRun, onProgress, onSnap){
+  var g=new Chess(fen), roots=g.moves({verbose:true});
+  if(!roots.length) return {over:true, depth:0, items:[], inCheck:g.in_check()};
+  var items=roots.map(function(m){return {m:m,score:0,exact:true,prev:0}});
+  var snapshot=null, start=performance.now();
+  deadline=start+ms; nodes=0;
+  for(var depth=1; depth<=9; depth++){
+    var bestSoFar=-INF, cur=[];
+    items.sort(function(a,b){return b.prev-a.prev});
+    try{
+      for(var i=0;i<items.length;i++){
+        if(myRun!==runId) return null;
+        await yieldUI();
+        if(myRun!==runId) return null;
+        var it=items[i], low=bestSoFar===-INF?-INF:bestSoFar-WINDOW;
+        g.move(it.m);
+        var v=-search(g,depth-1,-INF,-low,1);
+        g.undo();
+        var exact=!(low!==-INF && v<=low);
+        cur.push({m:it.m,score:exact?v:Math.min(v,low),exact:exact});
+        if(exact && v>bestSoFar) bestSoFar=v;
+        onProgress(depth,(i+1)/items.length,(performance.now()-start)/ms);
+      }
+    }catch(e){ if(e!==TIMEOUT) throw e; break; }
+    snapshot=cur.map(function(c){return {m:c.m,score:c.score,exact:c.exact}});
+    items=cur.map(function(c){return {m:c.m,score:c.score,exact:c.exact,prev:c.exact?c.score:c.score-1000}});
+    snapshot.depth=depth;
+    if(onSnap) onSnap({over:false,depth:depth,items:snapshot,nodes:nodes});
+    if(performance.now()>deadline) break;
+    if(bestSoFar>MATE-50) break;
+  }
+  if(!snapshot){ // fallback: shallow static ordering
+    snapshot=items.map(function(it){return {m:it.m,score:0,exact:true}}); snapshot.depth=0;
+  }
+  return {over:false, depth:snapshot.depth, items:snapshot, nodes:nodes};
+}
+
+/* ---------- Classification by Elo ---------- */
+function eloProfile(elo){
+  var center=Math.max(18,80-(elo-1500)*0.2);
+  return {center:center, lo:center*0.4, hi:center*1.7};
+}
+function fmtScore(white){
+  var sign=white>0?"+":white<0?"−":"";
+  if(Math.abs(white)>MATE-100) return sign+"M"+Math.ceil((MATE-Math.abs(white))/2);
+  return sign+Math.abs(white/100).toFixed(2);
+}
+/* Когда лучший ход очевиден, практичным считается он же. */
+function obviousReason(fen,m,items){
+  var t=estimateThink(fen,items);
+  if(t&&t.sec<=2) return t.label==="единственный ход"?"единственный ход":"очевидный ход";
+  if(m.captured&&VAL[m.captured]>=VAL[m.piece]-10) return "простое взятие или размен";
+  return null;
+}
+function classify(res, elo, turn, fen){
+  var all=res.items.map(function(i){return i});
+  var exact=all.filter(function(i){return i.exact}).sort(function(a,b){return b.score-a.score});
+  var best=exact.length?exact[0].score:0;
+  function dec(i){
+    var white=turn==="w"?i.score:-i.score;
+    return {m:i.m,score:i.score,white:white,loss:Math.max(0,best-i.score),exact:i.exact};
+  }
+  var top=exact.slice(0,3).map(dec);
+  var prof=eloProfile(elo), forcedMate=best>MATE-100;
+  var topSet={}; top.forEach(function(t){topSet[t.m.san]=1});
+  var rest=exact.filter(function(i){return !topSet[i.m.san]}).map(dec);
+  var pool=forcedMate?[]:rest.filter(function(i){return i.loss>=prof.lo&&i.loss<=prof.hi&&i.score>-MATE+100});
+  pool.sort(function(a,b){return Math.abs(a.loss-prof.center)-Math.abs(b.loss-prof.center)});
+  var mid=pool.slice(0,4);
+  if(!mid.length&&!forcedMate){
+    mid=rest.filter(function(i){return i.loss<=250&&i.score>-MATE+100}).sort(function(a,b){return Math.abs(a.loss-prof.center)-Math.abs(b.loss-prof.center)}).slice(0,3);
+  }
+  var obvious=null;
+  if(!forcedMate&&top.length&&fen){
+    obvious=obviousReason(fen,top[0].m,res.items);
+    if(obvious) mid=[top[0]];
+  }
+  return {top:top,mid:mid,prof:prof,forcedMate:forcedMate,best:best,obvious:obvious};
+}
+function plMoves(n){ var m=n%10, h=n%100; return (m===1&&h!==11)?"ход":(m>=2&&m<=4&&(h<12||h>14))?"хода":"ходов"; }
+function describeAdvantage(white){
+  var a=Math.abs(white), who=white>0?"белых":"чёрных", clamp=Math.max(-1500,Math.min(1500,white));
+  var pct=100/(1+Math.exp(-clamp/250)), head;
+  if(a>MATE-100){
+    var n=Math.ceil((MATE-a)/2);
+    head="Мат в "+n+" "+plMoves(n)+": выигрывают "+(white>0?"белые":"чёрные");
+    pct=white>0?100:0;
+  }
+  else if(a<25) head="Позиция примерно равна";
+  else if(a<70) head="Небольшое преимущество у "+who;
+  else if(a<170) head="Заметное преимущество у "+who;
+  else if(a<330) head="Большое преимущество у "+who;
+  else head="Решающее преимущество у "+who;
+  return {head:head,pct:pct,score:fmtScore(white)};
+}
+/* Примерное время на ход для сильного любителя: эвристика по позиции и разрыву между ходами. */
+function estimateThink(fen,items){
+  var g=new Chess(fen), ms=g.moves({verbose:true}), n=ms.length;
+  if(n===0) return null;
+  if(n===1) return {sec:1,label:"единственный ход"};
+  var caps=0, checks=0, i;
+  for(i=0;i<ms.length;i++){ if(ms[i].captured) caps++; if(/[+#]/.test(ms[i].san)) checks++; }
+  var parts=fen.split(" "), pieces=(parts[0].match(/[a-zA-Z]/g)||[]).length, fullmove=+(parts[5]||1);
+  var sc=items.filter(function(x){return x.exact}).map(function(x){return x.score}).sort(function(a,b){return b-a});
+  var s1=sc.length?sc[0]:0, s2=sc.length>1?sc[1]:s1-300, s4=sc.length>3?sc[3]:s1-200;
+  var gap=s1-s2, spread=s1-s4;
+  var sec=2+n*0.12+caps*0.8+checks*0.6;
+  if(g.in_check()) sec+=2;
+  if(pieces<=16) sec+=(16-pieces)*1.3*Math.min(1,n/20);
+  if(gap>200) sec+=3;
+  else if(spread<30&&gap<20) sec-=1;
+  if(Math.abs(s1)>MATE-100) sec*=0.7;
+  if(fullmove<=3&&pieces>=30&&gap<80) sec=1;
+  else if(fullmove<=8&&pieces>=28) sec=Math.min(sec,4);
+  sec=Math.max(1,Math.min(30,Math.round(sec)));
+  var label=sec<=2?"очевидный ход":sec<=6?"обычная позиция":sec<=12?"нужен расчёт":sec<=20?"сложная позиция":"очень сложная позиция";
+  return {sec:sec,label:label};
+}
+function updateThink(t){
+  var el=$("think");
+  el.textContent=t?"Человеку на ход: ≈ "+t.sec+" с · "+t.label:"";
+}
+function updateAdvantage(white,note,depth,prelim){
+  var fill=$("advFill"), txt=$("advTxt");
+  if(white===null){
+    fill.style.width="50%";
+    txt.textContent=note||"Оценка позиции появится после анализа.";
+    return;
+  }
+  var d=describeAdvantage(white);
+  fill.style.width=d.pct.toFixed(1)+"%";
+  txt.innerHTML="";
+  txt.appendChild(document.createTextNode(d.head));
+  var sm=document.createElement("small");
+  var tail="";
+  if(prelim) tail=" · считаю…";
+  else if(depth&&depth<8) tail=" · оценка грубая, мало глубины";
+  sm.textContent=d.score+(depth?" · глубина "+depth:"")+tail;
+  txt.appendChild(sm);
+}
+function lossTag(loss){
+  if(loss<=15) return ["почти лучший","good"];
+  if(loss<=45) return ["хороший ход","good"];
+  if(loss<=110) return ["нормальный, небольшая неточность","mid"];
+  if(loss<=250) return ["заметная неточность","mid"];
+  return ["слабый ход","bad"];
+}
+
+/* ---------- Board UI ---------- */
+function sqName(r,f){ return "abcdefgh"[f]+(8-r); }
+function drawBoard(){
+  var el=$("board"), b=game.board(), html="";
+  for(var vr=0;vr<8;vr++)for(var vf=0;vf<8;vf++){
+    var r=flipped?7-vr:vr, f=flipped?7-vf:vf, p=b[r][f], name=sqName(r,f);
+    var cls="sq "+(((r+f)%2===0)?"l":"d");
+    if(selected===name) cls+=" sel";
+    else if(targets.indexOf(name)>=0) cls+=" tgt";
+    if(hlMove&&(hlMove.from===name||hlMove.to===name)) cls+=" hl";
+    html+='<div class="'+cls+'" data-sq="'+name+'" role="gridcell" tabindex="-1" aria-label="'+name+'">';
+    if(vf===0) html+='<span class="co r">'+(8-r)+'</span>';
+    if(vr===7) html+='<span class="co f">'+"abcdefgh"[f]+'</span>';
+    if(p) html+='<span class="p '+p.color+'">'+GLYPH[p.type]+'︎</span>';
+    html+='</div>';
+  }
+  el.innerHTML=html;
+  drawArrows();
+}
+var arrowMoves=null;
+function sqCenter(name){
+  var f="abcdefgh".indexOf(name[0]), r=8-(+name[1]);
+  return {x:(flipped?7-f:f)+0.5, y:(flipped?7-r:r)+0.5};
+}
+function arrowSvg(m,color,shaft,headW){
+  var a=sqCenter(m.from), b=sqCenter(m.to);
+  var dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy), ux=dx/len, uy=dy/len;
+  var headL=0.42, tipX=b.x-ux*0.1, tipY=b.y-uy*0.1;
+  var sx=a.x+ux*0.12, sy=a.y+uy*0.12, bx=tipX-ux*headL, by=tipY-uy*headL, px=-uy, py=ux;
+  return '<g style="fill:'+color+';stroke:'+color+'" opacity="0.88">'+
+    '<line x1="'+sx+'" y1="'+sy+'" x2="'+bx+'" y2="'+by+'" stroke-width="'+shaft+'" stroke-linecap="round"/>'+
+    '<polygon stroke="none" points="'+tipX+','+tipY+' '+(bx+px*headW)+','+(by+py*headW)+' '+(bx-px*headW)+','+(by-py*headW)+'"/></g>';
+}
+function drawArrows(){
+  var svg=$("arrows"), lg=$("legend");
+  if(!svg) return;
+  if(!arrowMoves||!$("showArrows").checked){ svg.innerHTML=""; lg.innerHTML=""; return; }
+  var am=arrowMoves;
+  if(am.mid&&am.best&&!am.midColor&&am.mid.from===am.best.from&&am.mid.to===am.best.to){
+    svg.innerHTML=arrowSvg(am.best,"var(--arrow-best)",0.16,0.26);
+    lg.innerHTML='<span class="k1"><i></i>Лучший и практичный: <b>'+am.best.san+'</b></span>';
+    return;
+  }
+  var s="", l="";
+  if(arrowMoves.mid){ s+=arrowSvg(arrowMoves.mid,arrowMoves.midColor||"var(--arrow-mid)",0.12,0.22); l+='<span class="k2"><i'+(arrowMoves.midColor?' style="background:'+arrowMoves.midColor+'"':'')+'></i>'+(arrowMoves.labelMid||('Практичный ('+$("elo").value+')'))+': <b>'+arrowMoves.mid.san+'</b></span>'; }
+  if(arrowMoves.best){ s+=arrowSvg(arrowMoves.best,"var(--arrow-best)",0.16,0.26); l=('<span class="k1"><i></i>'+(arrowMoves.labelBest||"Лучший")+': <b>'+arrowMoves.best.san+'</b></span>')+l; }
+  svg.innerHTML=s; lg.innerHTML=l;
+}
+function setStatus(){
+  var t=game.turn()==="w"?"белых":"чёрных", s;
+  if(game.in_checkmate()) s="Мат. Победили "+(game.turn()==="w"?"чёрные":"белые")+".";
+  else if(game.in_draw()) s="Ничья.";
+  else s="Ход "+t+(game.in_check()?" · шах":"")+"."
+  $("status").textContent=s;
+  $("fen").value=game.fen();
+}
+function refresh(){ drawBoard(); setStatus(); }
+
+$("board").addEventListener("click",function(e){
+  var sqEl=e.target.closest(".sq"); if(!sqEl) return;
+  var name=sqEl.getAttribute("data-sq");
+  if(selected&&targets.indexOf(name)>=0){ playMove({from:selected,to:name,promotion:"q"}); return; }
+  var piece=game.get(name);
+  if(piece&&piece.color===game.turn()){
+    selected=name;
+    targets=game.moves({square:name,verbose:true}).map(function(m){return m.to});
+  } else { selected=null; targets=[]; }
+  drawBoard();
+});
+function playMove(mv){
+  var res=game.move(mv);
+  selected=null; targets=[]; hlMove=null;
+  if(!res) return;
+  cancelReview();
+  clearResults(); refresh();
+  if(game.game_over()){ if(game.history().length>=4) startReview(true); return; }
+  if($("auto").checked) runAnalysis();
+}
+function clearResults(){
+  runId++; lastResult=null; arrowMoves=null; drawArrows(); updateThink(null);
+  updateAdvantage(null, game.in_checkmate()?"Мат: победили "+(game.turn()==="w"?"чёрные":"белые")+".":game.in_draw()?"Ничья.":null);
+  if(SF.busy&&SF.worker){ SF.worker.postMessage("stop"); }
+  $("analyze").disabled=false; $("analyze").textContent="Анализировать";
+  $("bestList").innerHTML='<li class="empty">Пока нет анализа.</li>';
+  $("midList").innerHTML='<li class="empty">Пока нет анализа.</li>';
+  $("bestNote").textContent=""; $("midNote").textContent="";
+  $("prog").style.width="0"; $("depthInfo").textContent="Нажмите «Анализировать».";
+}
+$("undo").onclick=function(){ cancelReview(); game.undo(); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
+$("flip").onclick=function(){ flipped=!flipped; drawBoard(); };
+$("reset").onclick=function(){ resetReview(); startFen=START; game=new Chess(START); selected=null;targets=[];hlMove=null; clearResults(); refresh(); };
+$("loadfen").onclick=loadFen;
+$("fen").addEventListener("keydown",function(e){ if(e.key==="Enter") loadFen(); });
+function loadFen(){
+  var v=$("fen").value.trim(), chk=game.validate_fen(v), next;
+  if(chk.valid){ next=new Chess(v); }
+  else {
+    next=new Chess();
+    if(!v||!next.load_pgn(v,{sloppy:true})){ $("status").textContent="Не удалось прочитать ни FEN, ни список ходов."; return; }
+  }
+  resetReview(); startFen=chk.valid?v:START;
+  game=next; selected=null;targets=[];hlMove=null; clearResults(); refresh();
+  if($("auto").checked) runAnalysis();
+}
+function quickMove(){
+  var v=$("mvin").value.trim(); if(!v) return;
+  var m=game.move(v,{sloppy:true});
+  if(!m){ $("status").textContent="Не понял ход «"+v+"». Примеры: e4, Nf3, O-O, e2e4."; return; }
+  game.undo(); $("mvin").value="";
+  playMove({from:m.from,to:m.to,promotion:m.promotion||"q"});
+}
+$("mvgo").onclick=quickMove;
+$("mvin").addEventListener("keydown",function(e){ if(e.key==="Enter") quickMove(); });
+$("analyze").onclick=function(){ runAnalysis(); };
+$("showArrows").addEventListener("change",drawArrows);
+$("elo").addEventListener("input",function(){ updateEloUi(); if(lastResult) renderResults(); });
+function updateEloUi(){
+  var elo=+$("elo").value, p=eloProfile(elo);
+  $("eloVal").textContent=elo;
+  $("eloHint").textContent="Ищем ходы, которые уступают лучшему на "+Math.round(p.lo)+"–"+Math.round(p.hi)+" сотых пешки: так играют в среднем на этом уровне.";
+}
+
+/* ---------- Results ---------- */
+function moveRow(d,showLoss){
+  var tag=lossTag(d.loss), li=document.createElement("li");
+  li.className="mv"; li.tabIndex=0;
+  li.innerHTML='<span class="san"></span><span class="meta"><span class="ev"></span><span class="tag '+tag[1]+'"></span></span><button class="play">Сыграть</button>';
+  li.querySelector(".san").textContent=d.m.san;
+  li.querySelector(".ev").textContent="оценка "+fmtScore(d.white)+(showLoss&&d.loss>0?" · потеря "+Math.round(d.loss)+" сот.":"");
+  li.querySelector(".tag").textContent=tag[0];
+  if(hlMove&&hlMove.from===d.m.from&&hlMove.to===d.m.to) li.classList.add("on");
+  function on(){
+    hlMove={from:d.m.from,to:d.m.to}; drawBoard();
+    document.querySelectorAll(".mv").forEach(function(x){x.classList.remove("on")}); li.classList.add("on");
+  }
+  li.addEventListener("click",function(e){ if(e.target.classList.contains("play")) return; on(); });
+  li.addEventListener("keydown",function(e){ if(e.key==="Enter") on(); });
+  li.querySelector(".play").addEventListener("click",function(){ playMove({from:d.m.from,to:d.m.to,promotion:d.m.promotion||"q"}); });
+  return li;
+}
+function renderResults(){
+  var res=lastResult.res, turn=lastResult.turn;
+  if(res.over){
+    $("bestList").innerHTML='<li class="empty">В позиции нет ходов.</li>';
+    $("midList").innerHTML=""; arrowMoves=null; drawArrows(); return;
+  }
+  var c=classify(res,+$("elo").value,turn,lastResult.fen);
+  if(res.noEval) updateAdvantage(null,"Единственный ход, оценку считать не нужно.");
+  else if(res.items.length) updateAdvantage(turn==="w"?c.best:-c.best,null,res.depth,!lastResult.final);
+  updateThink(lastResult.fen&&res.items.length?estimateThink(lastResult.fen,res.items):null);
+  arrowMoves={best:c.top[0]?c.top[0].m:null, mid:c.mid[0]?c.mid[0].m:null};
+  drawArrows();
+  var bl=$("bestList"), ml=$("midList"); bl.innerHTML=""; ml.innerHTML="";
+  c.top.forEach(function(d){bl.appendChild(moveRow(d,false))});
+  $("bestNote").textContent="· оценка за белых";
+  if(c.forcedMate){
+    ml.innerHTML='<li class="empty">В позиции есть форсированный мат, слабее его играть незачем.</li>';
+    $("midNote").textContent="";
+  } else if(!c.mid.length){
+    ml.innerHTML='<li class="empty">Подходящих ходов не нашлось: почти все альтернативы заметно хуже или позиция слишком острая.</li>';
+  } else {
+    $("midNote").textContent=c.obvious?"· "+c.obvious+": лучший ход и есть практичный":"· ближе всего к уровню "+$("elo").value;
+    c.mid.forEach(function(d){ml.appendChild(moveRow(d,true))});
+  }
+}
+/* ---------- Stockfish (UCI in a Web Worker) ---------- */
+var SF={worker:null,ready:false,busy:false,queued:null,cur:null,bucket:{},expected:0,legal:[],goN:0,bmN:0,nodes:0,mpv:7};
+var ENGINES=[
+  {name:"Stockfish 16 NNUE (быстрый)",js:"https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.js",wasm:"https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.wasm",timeout:90000},
+  {name:"Stockfish 10 (медленный)",js:"https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js",wasm:null,timeout:20000}
+];
+function sfInit(eng){
+  return new Promise(function(resolve){
+    var timer, done=false;
+    function finish(ok){
+      if(done) return; done=true; clearTimeout(timer);
+      if(!ok&&SF.worker){ try{SF.worker.terminate()}catch(e){} SF.worker=null; SF.ready=false; }
+      resolve(ok);
+    }
+    try{
+      var blob=new Blob(['importScripts("'+eng.js+'");'],{type:"application/javascript"});
+      var url=URL.createObjectURL(blob)+(eng.wasm?"#"+eng.wasm:"");
+      SF.worker=new Worker(url);
+    }catch(e){ finish(false); return; }
+    timer=setTimeout(function(){ finish(false); },eng.timeout);
+    SF.worker.onerror=function(){
+      if(!SF.ready){ finish(false); }
+      else { SF.ready=false; engineReady=true; engineName="Встроенный движок"; setBadge(); }
+    };
+    SF.worker.onmessage=function(ev){
+      var line=typeof ev.data==="string"?ev.data:"";
+      if(!SF.ready){
+        if(line==="uciok"){
+          SF.worker.postMessage("setoption name Contempt value 0");
+          SF.worker.postMessage("setoption name MultiPV value 7");
+          SF.worker.postMessage("isready");
+        }
+        else if(line==="readyok"){ SF.ready=true; finish(true); }
+        return;
+      }
+      sfHandle(line);
+    };
+    SF.worker.postMessage("uci");
+  });
+}
+function sfAnalyze(fen,depth,token,onRes,onDone,opts){
+  var job={fen:fen,depth:depth,token:token,onRes:onRes,onDone:onDone,opts:opts||{}};
+  if(SF.busy){ SF.queued=job; SF.worker.postMessage("stop"); return; }
+  sfStart(job);
+}
+function sfStart(job){
+  var g=new Chess(job.fen);
+  SF.cur=job; SF.busy=true; SF.bucket={}; SF.nodes=0;
+  SF.legal=g.moves({verbose:true});
+  var mpv=job.opts.multipv||7;
+  if(SF.mpv!==mpv){ SF.worker.postMessage("setoption name MultiPV value "+mpv); SF.mpv=mpv; }
+  SF.expected=Math.min(mpv,SF.legal.length);
+  SF.goN++;
+  SF.worker.postMessage("position fen "+job.fen);
+  SF.worker.postMessage("go depth "+job.depth+" movetime "+(job.opts.movetime||15000));
+}
+function sfHandle(line){
+  if(line.indexOf("bestmove")===0){
+    SF.bmN++; SF.busy=false;
+    var cur=SF.cur;
+    if(SF.queued){ var q=SF.queued; SF.queued=null; sfStart(q); }
+    else if(cur&&cur.onDone){ cur.onDone(); }
+    return;
+  }
+  if(line.indexOf("info ")!==0||SF.goN-SF.bmN!==1||!SF.cur) return;
+  if(line.indexOf(" multipv ")<0||line.indexOf(" score ")<0||line.indexOf(" pv ")<0) return;
+  if(line.indexOf("lowerbound")>=0||line.indexOf("upperbound")>=0) return;
+  var d=+(/ depth (\d+)/.exec(line)||[])[1], k=+(/ multipv (\d+)/.exec(line)||[])[1];
+  var sc=/ score (cp|mate) (-?\d+)/.exec(line), pv=/ pv (\S+)/.exec(line), nd=/ nodes (\d+)/.exec(line);
+  if(!d||!k||!sc||!pv) return;
+  if(nd) SF.nodes=+nd[1];
+  var np=/ nps (\d+)/.exec(line); if(np) SF.nps=+np[1];
+  var score;
+  if(sc[1]==="cp") score=+sc[2];
+  else { var n=+sc[2], an=Math.abs(n); score=(n>0?1:-1)*(MATE-2*an+1); }
+  var b=SF.bucket[d]||(SF.bucket[d]={n:0,lines:{}});
+  if(!b.lines[k]) b.n++;
+  b.lines[k]={uci:pv[1],score:score};
+  if(b.n>=SF.expected){
+    var items=[];
+    for(var i=1;i<=SF.expected;i++){
+      var L=b.lines[i]; if(!L) continue;
+      var from=L.uci.slice(0,2), to=L.uci.slice(2,4), pr=L.uci.length>4?L.uci[4]:undefined, mv=null;
+      for(var j=0;j<SF.legal.length;j++){
+        var lm=SF.legal[j];
+        if(lm.from===from&&lm.to===to&&(lm.promotion||undefined)===pr){mv=lm;break;}
+      }
+      if(mv) items.push({m:mv,score:L.score,exact:true});
+    }
+    SF.cur.onRes({over:false,depth:d,items:items,nodes:SF.nodes});
+    delete SF.bucket[d-3];
+  }
+}
+
+/* ---------- Engine selection and run ---------- */
+var engineName="Движок", engineReady=false;
+function setBadge(){ $("engine").textContent=engineReady?engineName:"Загружаю Stockfish…"; }
+var enginePromise=(async function(){
+  for(var i=0;i<ENGINES.length;i++){
+    $("engine").textContent="Загружаю: "+ENGINES[i].name+(i===0?" (первый раз до минуты)":"")+"…";
+    var ok=await sfInit(ENGINES[i]);
+    if(ok){ engineReady=true; engineName=ENGINES[i].name; setBadge();
+      if(!lastResult&&$("auto").checked&&!game.game_over()) runAnalysis();
+      return true; }
+  }
+  engineReady=true; engineName="Встроенный движок (Stockfish не загрузился)"; setBadge();
+  if(!lastResult&&$("auto").checked&&!game.game_over()) runAnalysis();
+  return false;
+})();
+var lastPaint=0;
+async function runAnalysis(){
+  if(game.game_over()){ clearResults(); return; }
+  var my=++runId, fen=game.fen(), turn=game.turn(), target=+$("depth").value;
+  $("analyze").textContent="Считаю…";
+  $("depthInfo").textContent=engineReady?"Анализ запущен.":"Загружаю движок…";
+  var useSf=await enginePromise;
+  if(my!==runId) return;
+  var shownTarget=(useSf&&SF.ready)?target:6;
+  var t0=performance.now(), prevBest=null;
+  function show(res){
+    if(my!==runId) return;
+    lastResult={res:res,turn:turn,final:false,fen:fen};
+    var now=performance.now();
+    if(now-lastPaint>120){ lastPaint=now; renderResults(); }
+    /* Очевидный ход: если лучший ход не менялся две глубины подряд, дальше считать незачем. */
+    if(useSf&&SF.ready&&res.items&&res.items.length){
+      var b0=res.items[0].m, key=b0.from+b0.to+(b0.promotion||"");
+      if(prevBest===key&&res.depth>=Math.min(8,target)&&res.depth<target&&obviousReason(fen,b0,res.items)){ SF.worker.postMessage("stop"); }
+      prevBest=key;
+    }
+    $("prog").style.width=Math.min(100,Math.round(res.depth/shownTarget*100))+"%";
+    $("depthInfo").textContent=engineName+" · глубина "+res.depth+" из "+shownTarget;
+  }
+  function finish(){
+    if(my!==runId) return;
+    $("analyze").textContent="Анализировать"; $("prog").style.width="100%";
+    if(!lastResult&&SF.legal.length===1){
+      lastResult={res:{over:false,depth:0,noEval:true,items:[{m:SF.legal[0],score:0,exact:true}]},turn:turn,fen:fen};
+    }
+    if(lastResult){ lastResult.final=true; renderResults(); var sec=((performance.now()-t0)/1000).toFixed(1).replace(".",",");
+      $("depthInfo").textContent=engineName+" · глубина "+lastResult.res.depth+" · готово за "+sec+" с"+(SF.nps&&useSf?" · "+Math.round(SF.nps/1000)+" тыс. поз./с":""); }
+  }
+  if(useSf&&SF.ready){
+    sfAnalyze(fen,target,my,show,finish);
+  } else {
+    await analyzePosition(fen,6000,my,function(){},show);
+    finish();
+  }
+}
+/* ---------- Разбор партии ---------- */
+var startFen=START, review={running:false,id:0,data:null};
+function winPct(cp){ cp=Math.max(-1500,Math.min(1500,cp)); return 50+50*(2/(1+Math.exp(-0.00368208*cp))-1); }
+function sfEval(fen,depth){
+  return new Promise(function(resolve){
+    var last=null;
+    sfAnalyze(fen,depth,0,function(r){last=r},function(){resolve(last)},{multipv:1,movetime:6000});
+  });
+}
+function cancelReview(){
+  if(!review.running) return;
+  review.id++; review.running=false;
+  $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="0"; $("revNote").textContent="";
+}
+function resetReview(){
+  cancelReview(); review.data=null;
+  $("revOut").innerHTML='<p class="hint">Разбор запускается сам после мата или ничьей. Можно запустить и раньше, для любой позиции с ходами.</p>';
+  $("revNote").textContent="";
+}
+/* s[i]: оценка позиции i с точки зрения того, чей ход (в сотых пешки); bestMv[i]: лучший ход движка там. */
+function buildReview(hist,turns,s,bestMv){
+  var res=[], acc={w:[],b:[]}, cnt={w:{bl:0,mi:0,ina:0},b:{bl:0,mi:0,ina:0}}, w=[], i;
+  for(i=0;i<s.length;i++) w.push(turns[i]==="w"?s[i]:-s[i]);
+  for(i=0;i<hist.length;i++){
+    var mover=turns[i], m=hist[i], b=bestMv[i];
+    var same=!!b&&b.from===m.from&&b.to===m.to&&(b.promotion||"")===(m.promotion||"");
+    var wl=same?0:Math.max(0,winPct(s[i])-winPct(-s[i+1]));
+    var cls=wl>=30?"bl":wl>=20?"mi":wl>=10?"ina":"ok";
+    var a=Math.max(0,Math.min(100,103.1668*Math.exp(-0.04354*wl)-3.1669));
+    acc[mover].push(a); if(cls!=="ok") cnt[mover][cls]++;
+    res.push({i:i,mover:mover,wl:wl,cls:cls,
+      best:b?{from:b.from,to:b.to,san:b.san,promotion:b.promotion}:null,
+      played:{from:m.from,to:m.to,san:m.san,promotion:m.promotion},
+      whiteBest:turns[i]==="w"?s[i]:-s[i], whitePlayed:turns[i]==="w"?-s[i+1]:s[i+1]});
+  }
+  return {res:res,acc:acc,cnt:cnt,w:w};
+}
+async function startReview(auto){
+  if(review.running){ cancelReview(); return; }
+  var hist=game.history({verbose:true});
+  if(hist.length<2){ $("revOut").innerHTML='<p class="hint">Сыграйте хотя бы пару ходов.</p>'; return; }
+  if(!(SF.ready&&SF.worker)){ $("revOut").innerHTML='<p class="hint">Для разбора нужен загруженный Stockfish.</p>'; return; }
+  clearResults();
+  var my=++review.id; review.running=true; review.data=null;
+  $("revBtn").textContent="Остановить"; $("revOut").innerHTML="";
+  var depth=+$("revDepth").value, N=hist.length, i;
+  var clone=new Chess(startFen), fens=[clone.fen()], turns=[clone.turn()];
+  for(i=0;i<N;i++){ clone.move({from:hist[i].from,to:hist[i].to,promotion:hist[i].promotion}); fens.push(clone.fen()); turns.push(clone.turn()); }
+  var s=[], bestMv=[];
+  for(i=0;i<=N;i++){
+    if(my!==review.id) return;
+    $("revNote").textContent="· позиция "+(i+1)+" из "+(N+1);
+    $("revProg").style.width=Math.round(i/(N+1)*100)+"%";
+    var g=new Chess(fens[i]), legal=g.moves({verbose:true});
+    if(legal.length===0){ s.push(g.in_checkmate()?-MATE:0); bestMv.push(null); continue; }
+    if(legal.length===1&&i<N){ s.push(null); bestMv.push(legal[0]); continue; }
+    var r=await sfEval(fens[i],depth);
+    if(!r||!r.items||!r.items.length) r=await sfEval(fens[i],depth);
+    if(my!==review.id) return;
+    if(!r||!r.items||!r.items.length){
+      review.running=false; $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="0"; $("revNote").textContent="";
+      $("revOut").innerHTML='<p class="hint">Движок не ответил на позиции '+(i+1)+'. Попробуйте ещё раз.</p>'; return;
+    }
+    s.push(r.items[0].score); bestMv.push(r.items[0].m);
+  }
+  for(i=N-1;i>=0;i--){ if(s[i]===null) s[i]=-s[i+1]; }
+  var data=buildReview(hist,turns,s,bestMv);
+  data.startFen=startFen;
+  data.hist=hist.map(function(m){return {from:m.from,to:m.to,promotion:m.promotion}});
+  var last=new Chess(fens[N]);
+  data.result=last.in_checkmate()?"Мат. Победили "+(last.turn()==="w"?"чёрные":"белые")+".":last.game_over()?"Ничья.":"Партия не закончена.";
+  review.data=data; review.running=false;
+  $("revBtn").textContent="Разобрать партию"; $("revProg").style.width="100%"; $("revNote").textContent="· готово";
+  renderReview(data);
+}
+function renderReview(d){
+  var out=$("revOut"); out.innerHTML="";
+  var wrap=document.createElement("div"); wrap.className="rev"; out.appendChild(wrap);
+  var head=document.createElement("div"); head.className="revcap"; head.textContent=d.result+" Ходов: "+d.res.length+" полуходов."; wrap.appendChild(head);
+  var sum=document.createElement("div"); sum.className="revsum"; wrap.appendChild(sum);
+  [["Белые","w"],["Чёрные","b"]].forEach(function(p){
+    var a=d.acc[p[1]], c=d.cnt[p[1]], avg=a.length?a.reduce(function(x,y){return x+y},0)/a.length:null;
+    var el=document.createElement("div"); el.className="revside";
+    el.innerHTML="<span></span><b></b><div class=\"cnt\"></div>";
+    el.children[0].textContent=p[0]+" · точность";
+    el.children[1].textContent=avg===null?"—":Math.round(avg)+"%";
+    el.children[2].textContent="?? "+c.bl+" · ? "+c.mi+" · ?! "+c.ina;
+    sum.appendChild(el);
+  });
+  var W=300,H=90,n=d.w.length,pts=[],k;
+  for(k=0;k<n;k++){ var x=n>1?k/(n-1)*W:0, y=H-winPct(d.w[k])/100*H; pts.push(x.toFixed(1)+","+y.toFixed(1)); }
+  var svg='<svg class="revchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="График оценки партии">'+
+    '<rect x="0" y="0" width="'+W+'" height="'+(H/2)+'" style="fill:var(--bar-black);opacity:.28"/>'+
+    '<rect x="0" y="'+(H/2)+'" width="'+W+'" height="'+(H/2)+'" style="fill:var(--bar-white);opacity:.28"/>'+
+    '<line x1="0" y1="'+(H/2)+'" x2="'+W+'" y2="'+(H/2)+'" style="stroke:var(--line);stroke-width:1"/>'+
+    '<polyline points="'+pts.join(" ")+'" style="fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linejoin:round"/>';
+  d.res.forEach(function(r){
+    if(r.cls==="bl"||r.cls==="mi"){
+      var px=n>1?(r.i+1)/(n-1)*W:0, py=H-winPct(d.w[r.i+1])/100*H;
+      svg+='<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="3.2" style="fill:'+(r.cls==="bl"?"var(--bad)":"var(--mid)")+';stroke:var(--surface);stroke-width:1"/>';
+    }
+  });
+  svg+="</svg>";
+  var chart=document.createElement("div"); chart.innerHTML=svg; wrap.appendChild(chart);
+  var cap=document.createElement("div"); cap.className="revcap"; cap.textContent="Выше середины лучше у белых, ниже у чёрных. Точки: грубые ошибки и ошибки."; wrap.appendChild(cap);
+  var key=d.res.filter(function(r){return r.cls==="bl"||r.cls==="mi"}).sort(function(a,b){return b.wl-a.wl}).slice(0,8).sort(function(a,b){return a.i-b.i});
+  var h=document.createElement("h2"); h.textContent="Ключевые ошибки"; h.style.margin="4px 0 0"; wrap.appendChild(h);
+  if(!key.length){ var e=document.createElement("p"); e.className="hint"; e.textContent="Грубых ошибок и ошибок нет."; wrap.appendChild(e); }
+  var list=document.createElement("ul"); list.className="list"; wrap.appendChild(list);
+  key.forEach(function(r){
+    var li=document.createElement("li"); li.className="kp"; li.tabIndex=0;
+    var no=Math.floor(r.i/2)+1, pre=r.mover==="w"?no+". ":no+"… ";
+    li.innerHTML="<span><span class=\"san\"></span><small></small></span><button class=\"play\">Показать</button>";
+    var sn=li.querySelector(".san"); sn.className="san "+r.cls; sn.textContent=pre+r.played.san+(r.cls==="bl"?"??":"?");
+    li.querySelector("small").textContent=(r.mover==="w"?"белые":"чёрные")+": оценка "+fmtScore(r.whiteBest)+" → "+fmtScore(r.whitePlayed)+(r.best?" · лучше было "+r.best.san:"");
+    function go(){ goToReview(r.i); }
+    li.addEventListener("click",go);
+    li.addEventListener("keydown",function(e){ if(e.key==="Enter") go(); });
+    list.appendChild(li);
+  });
+}
+function goToReview(k){
+  var d=review.data; if(!d) return;
+  var g=new Chess(d.startFen), j;
+  for(j=0;j<k;j++) g.move({from:d.hist[j].from,to:d.hist[j].to,promotion:d.hist[j].promotion});
+  game=g; selected=null; targets=[]; hlMove=null;
+  clearResults();
+  var r=d.res[k];
+  arrowMoves={best:r.best,mid:r.played,labelBest:"Лучше было",labelMid:"Сыграно",midColor:"var(--bad)"};
+  refresh();
+  try{ $("board").scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
+}
+$("revBtn").onclick=function(){ startReview(false); };
+updateEloUi(); refresh();
+})();
+</script>
